@@ -1,0 +1,97 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trombone Tuner</title>
+</head>
+<body>
+    <h1>Trombone Tuner</h1>
+    <button id="startButton">マイク開始</button>
+    <p id="status">待機中</p>
+    <h2>周波数</h2>
+    <p id="frequency">---</p>
+    <canvas id="waveform" width="600" height="200"></canvas> <!--波形を描くためのキャンバス-->
+    <script>
+        const startButton = document.getElementById("startButton");
+        const status = document.getElementById("status");
+        const frequencyDisplay = document.getElementById("frequency");
+        const canvas = document.getElementById("waveform");
+        const canvasContext = canvas.getContext("2d");
+        startButton.addEventListener("click", async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({//マイクを使うと宣言
+                    audio: true
+                });
+                status.textContent = "マイク取得成功";
+                const audioContext = new AudioContext();//音声を扱うための環境を作る
+                const microphone =
+				audioContext.createMediaStreamSource(stream);//マイクからの音声を環境に入れるための入口を作る
+                const analyser =
+                    audioContext.createAnalyser();//Analyser＝音を分析する人　耳がいい
+                analyser.fftSize = 2048;
+                microphone.connect(analyser);//マイクからの音声とAnalyserをつなぐ
+                const dataArray =
+                    new Uint8Array(analyser.fftSize);
+                function detectFrequency() {
+                    analyser.getByteTimeDomainData(dataArray);//Analyserが聴いた音の大きさを数値に出力する
+                    let bestOffset = -1;//ここからが周波数算出の意味不明なセカイ
+                    let bestCorrelation = 0;
+                    const SIZE = dataArray.length;
+                    for (let offset = 20; offset < SIZE / 2; offset++) {
+                        let correlation = 0;
+                        for (let i = 0; i < SIZE - offset; i++) {
+                            const value1 = dataArray[i] - 128;
+                            const value2 = dataArray[i + offset] - 128;
+                            correlation += value1 * value2;
+                        }
+                        if (correlation > bestCorrelation) {
+                            bestCorrelation = correlation;
+                            bestOffset = offset;
+                        }
+                    }
+                    if (bestOffset !== -1) {
+                        const frequency =
+                            audioContext.sampleRate / bestOffset;
+                        frequencyDisplay.textContent =
+                            frequency.toFixed(1) + " Hz";//出た周波数をここで表示する
+                    }
+                }//ここまでが周波数算出の意味不明なセカイ
+                function drawWaveform() {
+                    requestAnimationFrame(drawWaveform);//「次もまたdrawWaveform関数を呼び出す」という再帰処理の予約
+                    analyser.getByteTimeDomainData(dataArray);//Analyserが聴いた音の大きさを数値に出力する
+                    canvasContext.clearRect(
+                        0,
+                        0,
+                        canvas.width,
+                        canvas.height
+                    );
+                    canvasContext.beginPath();
+                    const sliceWidth =
+                        canvas.width / dataArray.length;
+                    let x = 0;
+                    for (let i = 0; i < dataArray.length; i++) {//dataArrayの中身を順番にみていく
+                        const value =
+                            dataArray[i] / 128.0;
+                        const y =
+                            value * canvas.height / 2;//描画しやすいようにデータを加工している
+                        if (i === 0) {
+                            canvasContext.moveTo(x, y);//1回目のループなら：ペンをその場所に持ってくる
+                        } else {
+                            canvasContext.lineTo(x, y);//2回目以降のループなら：ペンを下ろして動かす
+                        }
+                        x += sliceWidth;//横方向に少しずらす
+                    }
+                    canvasContext.stroke();//ここで描画する
+                }
+                setInterval(detectFrequency, 100);//100ミリ秒ごとにdetectFrequency関数を呼び出す予約
+                drawWaveform();//drawWaveform関数を最初に呼び出す処理
+            } catch (error) {
+                status.textContent = "マイク取得失敗";
+                console.error(error);
+            }
+        });
+    </script>
+</body>
+</html>
