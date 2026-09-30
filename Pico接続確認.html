@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pico通信テスト</title>
+</head>
+
+<body>
+
+    <h1>Pico通信テスト</h1>
+
+    <button id="connectButton">Picoに接続</button>
+
+    <p id="status">未接続</p>
+
+    <p>受信データ：</p>
+    <div id="data">---</div>
+
+    <script>
+        const connectButton = document.getElementById("connectButton");
+        const status = document.getElementById("status");
+        const dataDisplay = document.getElementById("data");
+
+        connectButton.addEventListener("click", async () => {
+
+            try {
+                const port = await navigator.serial.requestPort();
+
+                await port.open({
+                    baudRate: 115200
+                });
+
+                status.textContent = "Picoに接続しました";
+
+                const reader = port.readable
+                    .pipeThrough(new TextDecoderStream())
+                    .getReader();
+
+                while (true) {
+                    const { value, done } = await reader.read();
+
+                    if (done) {
+                        break;
+                    }
+
+                    if (value) {
+                        dataDisplay.textContent = value;
+                    }
+                }
+
+            } catch (error) {
+                status.textContent = "接続に失敗しました";
+                console.error(error);
+            }
+
+        });
+    </script>
+
+</body>
+</html>
