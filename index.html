@@ -80,6 +80,48 @@
 
         // 現在はPicoとの通信がないため、「「**仮の電圧を設定**」」　ココは用訂正
         let currentVoltage = 500;
+        connectButton.addEventListener("click", async () => {
+          try {
+            const port = await navigator.serial.requestPort();
+            await port.open({ baudRate: 115200 });
+        
+            status.textContent = "Pico接続済み";
+        
+            const reader = port.readable
+              .pipeThrough(new TextDecoderStream())
+              .getReader();
+        
+            let buffer = "";
+        
+            while (true) {
+              const { value, done } = await reader.read();
+        
+              if (done) break;
+              if (!value) continue;
+        
+              buffer += value;
+        
+              const lines = buffer.split("\n");
+              buffer = lines.pop();
+        
+              for (const line of lines) {
+                const text = line.trim();
+        
+                if (text === "") continue;
+        
+                const number = Number(text);
+        
+                if (Number.isFinite(number)) {
+                  currentVoltage = number;
+                  currentVoltageDisplay.textContent = number;
+                }
+              }
+            }
+          } catch (error) {
+            status.textContent = "Pico接続失敗";
+            console.error(error);
+          }
+        });
 
         // 現在の周波数に最も近い音階を探す関数
         function findNearestNote(currentFrequency) {
