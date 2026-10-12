@@ -10,6 +10,7 @@
     <h1>Trombone Tuner</h1>
     <button id="startButton">マイク開始</button>
     <p id="status">待機中</p>
+    <button id="connectButton">Picoに接続</button>
 
     <h2>現在の周波数</h2>
     <p id="frequency">---</p>
@@ -37,6 +38,7 @@
     <script>
         const startButton = document.getElementById("startButton");
         const status = document.getElementById("status");
+        const connectButton = document.getElementById("connectButton");
         const frequencyDisplay = document.getElementById("frequency");
         const currentVoltageDisplay = document.getElementById("currentVoltage");
         const targetNoteDisplay = document.getElementById("targetNote");
@@ -234,6 +236,7 @@
                 status.textContent = "マイク取得失敗";
                 console.error(error);
             }
+            
         });
     </script>
 </body>
