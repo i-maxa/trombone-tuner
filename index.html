@@ -3,59 +3,239 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pico通信テスト</title>
+    <title>Trombone Tuner</title>
+    <link rel="stylesheet" href="style.css">
 </head>
-
 <body>
+    <h1>Trombone Tuner</h1>
+    <button id="startButton">マイク開始</button>
+    <p id="status">待機中</p>
 
-    <h1>Pico通信テスト</h1>
+    <h2>現在の周波数</h2>
+    <p id="frequency">---</p>
 
-    <button id="connectButton">Picoに接続</button>
+    <h2>現在の電圧(仮)</h2>
+    <p id="currentVoltage">---</p>
 
-    <p id="status">未接続</p>
+    <h2>最も近い音階</h2>
+    <p id="targetNote">---</p>
 
-    <p>受信データ：</p>
-    <div id="data">---</div>
+    <h2>目標の周波数</h2>
+    <p id="targetFrequency">---</p>
+
+    <h2>目標の電圧</h2>
+    <p id="targetVoltage">---</p>
+
+    <h2>周波数の差</h2>
+    <p id="frequencyDifference">---</p>
+
+    <h2>電圧の差</h2>
+    <p id="voltageDifference">---</p>
+
+    <canvas id="waveform" width="600" height="200"></canvas> <!--波形を描くためのキャンバス-->
 
     <script>
-        const connectButton = document.getElementById("connectButton");
+        const startButton = document.getElementById("startButton");
         const status = document.getElementById("status");
-        const dataDisplay = document.getElementById("data");
+        const frequencyDisplay = document.getElementById("frequency");
+        const currentVoltageDisplay = document.getElementById("currentVoltage");
+        const targetNoteDisplay = document.getElementById("targetNote");
+        const targetFrequencyDisplay = document.getElementById("targetFrequency");
+        const targetVoltageDisplay = document.getElementById("targetVoltage");
+        const frequencyDifferenceDisplay = document.getElementById("frequencyDifference");
+        const voltageDifferenceDisplay = document.getElementById("voltageDifference");
+        const canvas = document.getElementById("waveform");
+        const canvasContext = canvas.getContext("2d");
 
-        connectButton.addEventListener("click", async () => {
+        // 音階ごとの周波数と、その音を出したときに測定した目標電圧
+        const targetData = [
+            { note: "シ♭", frequency: 117.0706719, voltage: 737 },
+            { note: "シ", frequency: 124.0320563, voltage: 170 },
+            { note: "ド", frequency: 131.4073862, voltage: 173 },
+            { note: "レ♭", frequency: 139.2212760, voltage: 215 },
+            { note: "レ", frequency: 147.4998039, voltage: 324 },
+            { note: "ミ♭", frequency: 156.2705986, voltage: 453 },
+            { note: "ミ", frequency: 165.5629320, voltage: 565 },
+            { note: "ファ", frequency: 175.4078162, voltage: 740 },
+            { note: "ソ♭", frequency: 185.8381078, voltage: 277 },
+            { note: "ソ", frequency: 196.8886167, voltage: 289 },
+            { note: "ラ♭", frequency: 208.5962231, voltage: 448 },
+            { note: "ラ", frequency: 221.0000000, voltage: 516 },
+            { note: "シ♭", frequency: 234.1413439, voltage: 738 },
+            { note: "シ", frequency: 248.0641127, voltage: 289 },
+            { note: "ド", frequency: 262.8147724, voltage: 419 },
+            { note: "レ♭", frequency: 278.4425520, voltage: 550 },
+            { note: "レ", frequency: 294.9996078, voltage: 740 },
+            { note: "ミ♭", frequency: 312.5411973, voltage: 420 },
+            { note: "ミ", frequency: 331.1258640, voltage: 560 },
+            { note: "ファ", frequency: 350.8156325, voltage: 739 },
+            { note: "ソ♭", frequency: 371.6762155, voltage: 450 },
+            { note: "ソ", frequency: 393.7772334, voltage: 550 },
+            { note: "ラ♭", frequency: 417.1924462, voltage: 471 },
+            { note: "ラ", frequency: 442.0000000, voltage: 550 },
+            { note: "シ♭", frequency: 468.2826877, voltage: 738 }
+        ];
 
-            try {
-                const port = await navigator.serial.requestPort();
+        // 現在はPicoとの通信がないため、「「**仮の電圧を設定**」」　ココは用訂正
+        let currentVoltage = 500;
 
-                await port.open({
-                    baudRate: 115200
-                });
+        // 現在の周波数に最も近い音階を探す関数
+        function findNearestNote(currentFrequency) {
+            // 最初の音階を「現在周波数に最も近い音階」の候補にする
+            let nearest = targetData[0];
 
-                status.textContent = "Picoに接続しました";
+            // 現在周波数と最初の音階の周波数との差
+            let smallestDifference = Math.abs(currentFrequency - nearest.frequency);
 
-                const reader = port.readable
-                    .pipeThrough(new TextDecoderStream())
-                    .getReader();
+            // すべての音階について、現在周波数との差を調べる
+            for (let i = 1; i < targetData.length; i++) {
+                const difference = Math.abs(currentFrequency - targetData[i].frequency);
 
-                while (true) {
-                    const { value, done } = await reader.read();
-
-                    if (done) {
-                        break;
-                    }
-
-                    if (value) {
-                        dataDisplay.textContent = value;
-                    }
+                // 今までより周波数の差が小さければ、その音階を新しい候補にする
+                if (difference < smallestDifference) {
+                    smallestDifference = difference;
+                    nearest = targetData[i];
                 }
-
-            } catch (error) {
-                status.textContent = "接続に失敗しました";
-                console.error(error);
             }
 
+            // 最も近かった音階のデータを返す
+            return nearest;
+        }
+
+        startButton.addEventListener("click", async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({//マイクを使うと宣言
+                    audio: true
+                });
+
+                status.textContent = "マイク取得成功";
+
+                const audioContext = new AudioContext();//音声を扱うための環境を作る
+                const microphone =
+                    audioContext.createMediaStreamSource(stream);//マイクからの音声を環境に入れるための入口を作る
+                const analyser =
+                    audioContext.createAnalyser();//Analyser＝音を分析する人　耳がいい
+
+                analyser.fftSize = 2048;
+                microphone.connect(analyser);//マイクからの音声とAnalyserをつなぐ
+
+                const dataArray =
+                    new Uint8Array(analyser.fftSize);
+
+                function detectFrequency() {
+                    analyser.getByteTimeDomainData(dataArray);//Analyserが聴いた音の大きさを数値に出力する
+
+                    let bestOffset = -1;//ここからが周波数算出の意味不明なセカイ
+                    let bestCorrelation = 0;
+                    const SIZE = dataArray.length;
+
+                    for (let offset = 20; offset < SIZE / 2; offset++) {
+                        let correlation = 0;
+
+                        for (let i = 0; i < SIZE - offset; i++) {
+                            const value1 = dataArray[i] - 128;
+                            const value2 = dataArray[i + offset] - 128;
+                            correlation += value1 * value2;
+                        }
+
+                        if (correlation > bestCorrelation) {
+                            bestCorrelation = correlation;
+                            bestOffset = offset;
+                        }
+                    }
+
+                    if (bestOffset !== -1) {
+                        const frequency =
+                            audioContext.sampleRate / bestOffset;//ここまでが周波数算出の意味不明なセカイ
+
+                        // 現在の周波数に最も近い音階を探す
+                        const target = findNearestNote(frequency);
+
+                        // 現在の周波数と目標の周波数との差
+                        const frequencyDifference =
+                            frequency - target.frequency;
+
+                        // 現在の電圧と目標の電圧との差
+                        const voltageDifference =
+                            currentVoltage - target.voltage;
+
+                        // 現在の周波数を表示する
+                        frequencyDisplay.textContent =
+                            frequency.toFixed(1) + " Hz";//出た周波数をここで表示する
+
+                        // 現在の電圧を表示する
+                        currentVoltageDisplay.textContent =
+                            currentVoltage;
+
+                        // 最も近い音階を表示する
+                        targetNoteDisplay.textContent =
+                            target.note;
+
+                        // その音階の目標周波数を表示する
+                        targetFrequencyDisplay.textContent =
+                            target.frequency.toFixed(1) + " Hz";
+
+                        // その音階の目標電圧を表示する
+                        targetVoltageDisplay.textContent =
+                            target.voltage;
+
+                        // 周波数の差を表示する
+                        frequencyDifferenceDisplay.textContent =
+                            frequencyDifference.toFixed(1) + " Hz";
+
+                        // 電圧の差を表示する
+                        voltageDifferenceDisplay.textContent =
+                            voltageDifference;
+                    }
+                }//ここまでが周波数算出の意味不明なセカイ
+
+                function drawWaveform() {
+                    requestAnimationFrame(drawWaveform);//「次もまたdrawWaveform関数を呼び出す」という再帰処理の予約
+
+                    analyser.getByteTimeDomainData(dataArray);//Analyserが聴いた音の大きさを数値に出力する
+
+                    canvasContext.clearRect(
+                        0,
+                        0,
+                        canvas.width,
+                        canvas.height
+                    );
+
+                    canvasContext.beginPath();
+
+                    const sliceWidth =
+                        canvas.width / dataArray.length;
+
+                    let x = 0;
+
+                    for (let i = 0; i < dataArray.length; i++) {//dataArrayの中身を順番にみていく
+                        const value =
+                            dataArray[i] / 128.0;
+
+                        const y =
+                            value * canvas.height / 2;//描画しやすいようにデータを加工している
+
+                        if (i === 0) {
+                            canvasContext.moveTo(x, y);//1回目のループなら：ペンをその場所に持ってくる
+                        } else {
+                            canvasContext.lineTo(x, y);//2回目以降のループなら：ペンを下ろして動かす
+                        }
+
+                        x += sliceWidth;//横方向に少しずらす
+                    }
+
+                    canvasContext.stroke();//ここで描画する
+                }
+
+                setInterval(detectFrequency, 100);//100ミリ秒ごとにdetectFrequency関数を呼び出す予約
+                drawWaveform();//drawWaveform関数を最初に呼び出す処理
+
+            } catch (error) {
+                status.textContent = "マイク取得失敗";
+                console.error(error);
+            }
         });
     </script>
-
 </body>
 </html>
+
