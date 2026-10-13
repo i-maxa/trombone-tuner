@@ -15,6 +15,12 @@
     <button id="startButton">マイク開始</button>
     <p id="status">待機中</p>
     <button id="connectButton">Picoに接続</button>
+    <button id="recordStartButton">記録開始</button>
+    <button id="recordStopButton" disabled>記録停止</button>
+    <button id="csvButton" disabled>CSV保存</button>
+
+    <p>記録状態：<span id="recordStatus">待機中</span></p>
+    <p>記録件数：<span id="recordCount">0</span></p>
 
     <h2>現在の周波数</h2>
     <p id="frequency">---</p>
@@ -52,6 +58,24 @@
         const voltageDifferenceDisplay = document.getElementById("voltageDifference");
         const canvas = document.getElementById("waveform");
         const canvasContext = canvas.getContext("2d");
+        const recordStartButton =
+          document.getElementById("recordStartButton");
+        const recordStopButton =
+          document.getElementById("recordStopButton");
+        const csvButton =
+          document.getElementById("csvButton");
+        const recordStatus =
+          document.getElementById("recordStatus");
+        const recordCount =
+          document.getElementById("recordCount");
+
+        let isRecording = false;
+        let recordingStartMs = 0;
+        const records = [];
+        
+        let sensorReceived = false;
+        let sensorLastUpdateMs = null;
+        let sensorPicoMs = null;
 
         // 音階ごとの周波数と、その音を出したときに測定した目標電圧
         const targetData = [
@@ -121,6 +145,9 @@
                   if (columns[1].trim() !== "" && Number.isFinite(number)) {
                     currentVoltage = number;
                     currentVoltageDisplay.textContent = number;
+                    sensorReceived = true;
+                    sensorLastUpdateMs = performance.now();
+                    sensorPicoMs = Number(columns[0].trim());
                   }
                 }
               }
@@ -210,6 +237,24 @@
                         // 現在の電圧と目標の電圧との差
                         const voltageDifference =
                             currentVoltage - target.voltage;
+                        if (isRecording) {
+                          const now = performance.now();
+                        
+                          records.push({
+                            elapsed_ms: (now - recordingStartMs).toFixed(1),
+                            pico_ms: sensorPicoMs ?? "",
+                            sensor_value: sensorReceived ? currentVoltage : "",
+                            sensor_age_ms: sensorLastUpdateMs === null
+                              ? ""
+                              : (now - sensorLastUpdateMs).toFixed(1),
+                            frequency_hz: frequency.toFixed(2),
+                            target_note: target.note,
+                            target_frequency_hz: target.frequency.toFixed(2),
+                            frequency_difference_hz: frequencyDifference.toFixed(2)
+                          });
+                        
+                          recordCount.textContent = records.length;
+                        }
 
                         // 現在の周波数を表示する
                         frequencyDisplay.textContent =
@@ -288,6 +333,56 @@
             }
             
         });
+    recordStartButton.addEventListener("click", () => {
+      records.length = 0;
+      recordingStartMs = performance.now();
+      isRecording = true;
+    
+      recordCount.textContent = "0";
+      recordStatus.textContent = "記録中";
+      recordStartButton.disabled = true;
+      recordStopButton.disabled = false;
+      csvButton.disabled = true;
+    });
+    
+    recordStopButton.addEventListener("click", () => {
+      isRecording = false;
+    
+      recordStatus.textContent = "記録停止";
+      recordStartButton.disabled = false;
+      recordStopButton.disabled = true;
+      csvButton.disabled = records.length === 0;
+    });
+    
+    csvButton.addEventListener("click", () => {
+      if (records.length === 0) return;
+    
+      const headers = Object.keys(records[0]);
+    
+      const escapeCsv = value =>
+        '"' + String(value).replace(/"/g, '""') + '"';
+    
+      const csv = [
+        headers.map(escapeCsv).join(","),
+        ...records.map(row =>
+          headers.map(key => escapeCsv(row[key])).join(",")
+        )
+      ].join("\r\n");
+    
+      const blob = new Blob(
+        ["\uFEFF" + csv],
+        { type: "text/csv;charset=utf-8;" }
+      );
+    
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+    
+      link.href = url;
+      link.download = "trombone_measurements.csv";
+      link.click();
+    
+      URL.revokeObjectURL(url);
+    });
     </script>
 </body>
 </html>
