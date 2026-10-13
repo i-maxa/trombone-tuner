@@ -109,11 +109,15 @@
         
                 if (text === "") continue;
         
-                const number = Number(text);
-        
-                if (Number.isFinite(number)) {
-                  currentVoltage = number;
-                  currentVoltageDisplay.textContent = number;
+                const columns = text.split(",");
+                
+                if (columns.length === 2) {
+                  const number = Number(columns[1].trim());
+                
+                  if (columns[1].trim() !== "" && Number.isFinite(number)) {
+                    currentVoltage = number;
+                    currentVoltageDisplay.textContent = number;
+                  }
                 }
               }
             }
