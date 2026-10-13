@@ -3,15 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trombone Tuner</title>
+    <title>Trombone Tuner - Realtime Guide</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <h1>Trombone Tuner</h1>
-    <p id="buildInfo">
-      バージョン：PicoTest-003
-      更新：2026-10-13 19:19
-    </p>
+    <p id="buildInfo" style="padding:8px;background:#fff3cd;border:1px solid #d6b656;font-weight:bold;">バージョン：RealtimeGuide-004（自動案内・自動学習）<br>更新：2026/10/13 19:44</p>
     <button id="startButton">マイク開始</button>
     <p id="status">待機中</p>
     <button id="connectButton">Picoに接続</button>
@@ -40,8 +37,21 @@
     <h2>周波数の差</h2>
     <p id="frequencyDifference">---</p>
 
-    <h2>センサ値の差</h2>
-    <p id="voltageDifference">---</p>
+    <h2>センサ値の差（自動学習した目標との差）</h2>
+    <p id="voltageDifference">未学習</p>
+
+    <h2>リアルタイム案内</h2>
+    <p id="guidance" style="font-size:1.4em;font-weight:bold;">マイクとPicoを接続してください</p>
+    <p id="centsDifference">音程差：---</p>
+    <p id="learningStatus">自動学習：未開始</p>
+    <label>
+      <input type="checkbox" id="autoLearnCheckbox" checked>
+      音程が合ったときに目標センサ値を自動学習する
+    </label>
+    <p style="max-width:700px;color:#555;">
+      案内は周波数のずれを基準に表示します。音が高い場合はスライドを伸ばし、低い場合は縮めます。
+      自動学習は音程が±15セント以内で安定したときだけ行います。
+    </p>
 
     <canvas id="waveform" width="600" height="200"></canvas> <!--波形を描くためのキャンバス-->
 
@@ -66,9 +76,11 @@
           document.getElementById("csvButton");
         const recordStatus =
           document.getElementById("recordStatus");
-        const recordCount =
-          document.getElementById("recordCount");
-
+        const recordCount = document.getElementById("recordCount");
+        const guidanceDisplay = document.getElementById("guidance");
+        const centsDifferenceDisplay = document.getElementById("centsDifference");
+        const learningStatusDisplay = document.getElementById("learningStatus");
+        const autoLearnCheckbox = document.getElementById("autoLearnCheckbox");
         let isRecording = false;
         let recordingStartMs = 0;
         const records = [];
@@ -77,6 +89,14 @@
         let sensorLastUpdateMs = null;
         let sensorPicoMs = null;
 
+        // 自動学習した目標センサ値。ページ再読み込みで初期化される。
+        // 周波数をキーにし、同じ音名の別オクターブを区別する。
+        const learnedSensorTargets = new Map();
+        const inTuneCounts = new Map();
+        const lastLearnedPicoMs = new Map();
+
+        // targetData内の固定 voltage 値は旧方式の参考値。
+        // リアルタイム案内では、音程が合ったときのセンサ値を自動学習して使う。
         // 音階ごとの周波数と、その音を出したときに測定した目標電圧
         const targetData = [
             { note: "シ♭", frequency: 117.0706719, voltage: 737 },
@@ -138,16 +158,21 @@
                 if (text === "") continue;
         
                 const columns = text.split(",");
-                
-                if (columns.length === 2) {
+
+                // Picoの行形式は「起動後の経過時間,センサ生値」。
+                // 2列とも数値として読めた行だけ最新センサ値として採用する。
+                if (columns.length === 2 &&
+                    columns[0].trim() !== "" &&
+                    columns[1].trim() !== "") {
+                  const picoTime = Number(columns[0].trim());
                   const number = Number(columns[1].trim());
-                
-                  if (columns[1].trim() !== "" && Number.isFinite(number)) {
+
+                  if (Number.isFinite(picoTime) && Number.isFinite(number)) {
                     currentVoltage = number;
                     currentVoltageDisplay.textContent = number;
                     sensorReceived = true;
                     sensorLastUpdateMs = performance.now();
-                    sensorPicoMs = Number(columns[0].trim());
+                    sensorPicoMs = picoTime;
                   }
                 }
               }
@@ -230,29 +255,91 @@
                         // 現在の周波数に最も近い音階を探す
                         const target = findNearestNote(frequency);
 
-                        // 現在の周波数と目標の周波数との差
-                        const frequencyDifference =
-                            frequency - target.frequency;
+                        // 周波数差を計算する。セントは音程差を相対的に表す単位。
+                        const frequencyDifference = frequency - target.frequency;
+                        const centsDifference = 1200 * Math.log2(frequency / target.frequency);
+                        const now = performance.now();
 
-                        // 現在の電圧と目標の電圧との差
-                        const voltageDifference =
-                            currentVoltage - target.voltage;
+                        // センサ値が最近更新されているか確認。古い値で学習・案内しない。
+                        const sensorAgeMs = sensorLastUpdateMs === null
+                          ? Infinity
+                          : now - sensorLastUpdateMs;
+                        const sensorFresh = sensorReceived && sensorAgeMs <= 500;
+
+                        // ±15セント以内で、センサも新しい場合だけ自動学習する。
+                        // 同じPicoサンプルを重複カウントしないよう、Pico時刻が変わった時だけ数える。
+                        const targetKey = String(target.frequency);
+                        if (autoLearnCheckbox.checked && sensorFresh &&
+                            Math.abs(centsDifference) <= 15 &&
+                            sensorPicoMs !== null &&
+                            lastLearnedPicoMs.get(targetKey) !== sensorPicoMs) {
+                          lastLearnedPicoMs.set(targetKey, sensorPicoMs);
+                          const count = (inTuneCounts.get(targetKey) || 0) + 1;
+                          inTuneCounts.set(targetKey, count);
+
+                          if (count >= 3) {
+                            if (!learnedSensorTargets.has(targetKey)) {
+                              // 初回は音程が合った時のセンサ値を目標値として記憶する。
+                              learnedSensorTargets.set(targetKey, currentVoltage);
+                            } else {
+                              // 以前の値を新しい観測値へ少しずつ近づけ、急変を抑える。
+                              const oldValue = learnedSensorTargets.get(targetKey);
+                              learnedSensorTargets.set(targetKey, oldValue * 0.85 + currentVoltage * 0.15);
+                            }
+                          }
+                        } else if (Math.abs(centsDifference) > 15) {
+                          inTuneCounts.set(targetKey, 0);
+                        }
+
+                        const learnedTarget = learnedSensorTargets.get(targetKey);
+                        const voltageDifference = learnedTarget === undefined
+                          ? null
+                          : currentVoltage - learnedTarget;
+
+                        // トロンボーンはスライドを伸ばすと低く、縮めると高くなる。
+                        // センサ値の増減方向は取付方向によるため、周波数差で方向を案内する。
+                        let guidance = "音程を測定中";
+                        if (!sensorFresh) {
+                          guidance = "センサ値が更新されていません。Pico接続を確認してください";
+                        } else if (Math.abs(centsDifference) <= 15) {
+                          guidance = "音程OK（±15セント以内）";
+                        } else if (centsDifference > 0) {
+                          guidance = "音が高い → スライドを伸ばす（音を下げる）";
+                        } else {
+                          guidance = "音が低い → スライドを縮める（音を上げる）";
+                        }
+
+                        let learningMessage;
+                        if (!autoLearnCheckbox.checked) {
+                          learningMessage = "自動学習：オフ";
+                        } else if (!sensorFresh) {
+                          learningMessage = "自動学習：センサ値が古いため停止";
+                        } else if (Math.abs(centsDifference) <= 15) {
+                          learningMessage = learnedTarget === undefined
+                            ? "自動学習：音程OKを検出。安定した測定を待っています"
+                            : "自動学習：目標センサ値を更新中";
+                        } else {
+                          learningMessage = learnedTarget === undefined
+                            ? "自動学習：音程が合うと目標値を学習します"
+                            : "自動学習：音程が合うと目標値を更新します";
+                        }
+
                         if (isRecording) {
-                          const now = performance.now();
-                        
                           records.push({
                             elapsed_ms: (now - recordingStartMs).toFixed(1),
                             pico_ms: sensorPicoMs ?? "",
-                            sensor_value: sensorReceived ? currentVoltage : "",
-                            sensor_age_ms: sensorLastUpdateMs === null
-                              ? ""
-                              : (now - sensorLastUpdateMs).toFixed(1),
+                            sensor_value: sensorFresh ? currentVoltage : "",
+                            sensor_age_ms: Number.isFinite(sensorAgeMs) ? sensorAgeMs.toFixed(1) : "",
                             frequency_hz: frequency.toFixed(2),
                             target_note: target.note,
                             target_frequency_hz: target.frequency.toFixed(2),
-                            frequency_difference_hz: frequencyDifference.toFixed(2)
+                            frequency_difference_hz: frequencyDifference.toFixed(2),
+                            frequency_difference_cents: centsDifference.toFixed(1),
+                            learned_target_sensor_value: learnedTarget === undefined ? "" : learnedTarget.toFixed(1),
+                            sensor_difference_from_learned_target: voltageDifference === null ? "" : voltageDifference.toFixed(1),
+                            guidance: guidance,
+                            learning_enabled: autoLearnCheckbox.checked
                           });
-                        
                           recordCount.textContent = records.length;
                         }
 
@@ -272,17 +359,23 @@
                         targetFrequencyDisplay.textContent =
                             target.frequency.toFixed(1) + " Hz";
 
-                        // その音階の目標電圧を表示する
+                        // 自動学習した目標センサ値を表示する。固定値は目標として使用しない。
                         targetVoltageDisplay.textContent =
-                            target.voltage;
+                            learnedTarget === undefined ? "未学習" : learnedTarget.toFixed(1);
 
-                        // 周波数の差を表示する
+                        // Hz差に加えて、相対的な音程差をセントで表示する。
                         frequencyDifferenceDisplay.textContent =
                             frequencyDifference.toFixed(1) + " Hz";
+                        centsDifferenceDisplay.textContent =
+                            "音程差：" + centsDifference.toFixed(1) + " セント";
 
-                        // 電圧の差を表示する
+                        // 学習済みの目標値がある場合だけセンサ値との差を表示する。
                         voltageDifferenceDisplay.textContent =
-                            voltageDifference;
+                            voltageDifference === null ? "未学習" : voltageDifference.toFixed(1);
+
+                        guidanceDisplay.textContent = guidance;
+                        learningStatusDisplay.textContent =
+                            learningMessage + "（学習済みの音：" + learnedSensorTargets.size + "種類）";
                     }
                 }//ここまでが周波数算出の意味不明なセカイ
 
@@ -386,4 +479,3 @@
     </script>
 </body>
 </html>
-
