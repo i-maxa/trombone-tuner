@@ -78,6 +78,13 @@ body > p {
     color: #e67e22;
 }
 
+#buildInfo {
+    padding: 8px;
+    background: #fff3cd;
+    border: 1px solid #d6b656;
+    font-weight: bold;
+}
+
 canvas {
     display: block;
     width: 100%;
